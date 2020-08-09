@@ -93,3 +93,4 @@ dependencies:
     - pywin32==227
     - tqdm==4.48.1
 prefix: C:\Users\flis1\Miniconda3\envs\OCR
+
