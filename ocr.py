@@ -15,9 +15,26 @@ from PIL import Image
 from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.svm import OneClassSVM
-
+from sklearn.decomposition import PCA
+from nltk import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from nltk import  pos_tag
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+
+class LemmaTokenizer:
+    def __init__(self):
+        self.wnl = WordNetLemmatizer()
+
+    def __call__(self, doc):
+        return [
+            self.wnl.lemmatize(
+                w.lower(), t[0].lower()) if t[0].lower() in ["a", "v", "n"] else self.wnl.lemmatize(w.lower()) \
+            for w, t in pos_tag(word_tokenize(doc)
+                                )
+        ]
+
 
 class ocr_validation:
 
@@ -35,13 +52,14 @@ class ocr_validation:
             pickle.dump(self.texts,open("train.p"))
         df=pd.read_excel("NDA Breakdown.xlsx")
         #We create the vocabulary which we will use as features in our model
-        self.vocabulary={term:i for i,term in enumerate(df["Terms"].dropna().unique())}
+        self.vocabulary={term.lower():i for i,term in enumerate(df["Terms"].dropna().apply(lambda x: x.lower()).unique())}
         #We initialize a word vectorizer we our predefined vocabulary.
-        self.cvec = self.cvec = CountVectorizer(vocabulary=self.vocabulary,binary=True)
+        self.cvec = CountVectorizer(vocabulary=self.vocabulary,tokenizer=LemmaTokenizer())
         series_clause = df.iloc[np.where(df["Clause"].notna())[0], 0]
         indices = list(series_clause.index)
         indices.append(len(df))
-        feature_dict = {series_clause[index]: list(df.iloc[indices[i]:indices[i + 1], 2]) for i, index in enumerate(series_clause.index)}
+        self.feature_dict = {series_clause[index]: list(df.iloc[indices[i]:indices[i + 1], 2].dropna()) for i, index in enumerate(series_clause.index)}
+        self.feature_dict = {k: list(map(lambda x: x.lower(), v)) for k, v in self.feature_dict.items()}
         self.X = self.cvec.fit_transform(self.texts)
         #We initialize a one Class SVM, which is used for anomaly detection
         model = OneClassSVM(gamma='auto',nu=nu)
@@ -69,7 +87,7 @@ class ocr_validation:
         return txt_data
 
     #the parametres of the functions are the text file the built model and the Type of representation for the text vector
-    def evaluate(self,test_texts,results,model,exploratory=False):
+    def evaluate(self,test_texts,results,model,exploratory=False,avgs=None):
         #We intialize the counters for all the measures.
         correct=0
         correct_pos=0
@@ -89,7 +107,10 @@ class ocr_validation:
             #if we set exploratory to True we go through the wrongly classified examples
             elif exploratory==True:
                 print(results[i])
-                print(x)
+                print(model.decision_function([x]))
+                print(model.score_samples([x]))
+                #if avgs != None:
+
         len_neg=sum(1 if x==-1 else 0  for x in results)
         len_pos=len(results)-len_neg
         return [correct/len(results),correct_pos/len_pos,correct_neg/len_neg]
@@ -104,7 +125,7 @@ class ocr_validation:
         os.chdir("..")
         return test_txt
 
-    def make_prediction(self, path, model):
+    def make_prediction(self, path, model,vectorizer):
         ext=path.split(".")[-1]
         if ext=="docx":
             convert(path, os.getcwd()+"\\pred.pdf")
@@ -115,10 +136,18 @@ class ocr_validation:
         example_text=""
         for img in images:
             example_text+=pytesseract.image_to_string(img)
-        return model.predict(self.cvec.fit_transform([example_text]))[0]
+        return model.predict(vectorizer([example_text]))[0]
+
+    def sum_vectorize(self,txt):
+        txt_vec = self.cvec.transform(txt).toarray()[0]
+        return_vec=[]
+        for k in self.feature_dict.keys():
+            column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k]))
+            return_vec.append(txt_vec[column_indices].sum())
+        return [np.array(return_vec)]
 
     def convert_to_jpg(self):
-        os.chdir("pdf")
+        os.chdir("toconvert")
         dataset_folder="\\".join(os.getcwd().split("\\")[:-1])+"\\dataset\\"
         for file_name in os.listdir():
             images= convert_from_path(file_name)
@@ -141,6 +170,22 @@ class ocr_validation:
 if __name__ == "__main__":
     ocr_inst=ocr_validation()
     model=ocr_inst.setup_model(nu=0.05)
+    pcas={}
+    df_pc=pd.DataFrame(ocr_inst.X.toarray())
+    ocr_inst.feature_dict.pop("Sign-off")
+
     test_txt=pickle.load(open("test.p","rb"))
     test_x= ocr_inst.cvec.transform(list(x[0] for x in test_txt)).toarray()
+    test_df=pd.DataFrame(test_x)
+    for k in ocr_inst.feature_dict.keys():
+        column_indices=list(map(lambda x: ocr_inst.cvec.get_feature_names().index(x),ocr_inst.feature_dict[k]))
+        pca=PCA(n_components=1)
+        df_pc[k+"_pca"]=pca.fit_transform(df_pc.iloc[:,column_indices])
+        test_df[k+"_pca"]=pca.transform(test_df.iloc[:,column_indices])
+        pcas[k]=pca
+
+
+    model_pca=OneClassSVM(nu=0.05)
+    model_pca.fit(df_pc.iloc[:75,-12:])
     print(ocr_inst.evaluate(test_x,list(x[1] for x in test_txt),model))
+    print(ocr_inst.evaluate(test_df.iloc[:,-12:].to_numpy(),list(x[1] for x in test_txt),model_pca))
