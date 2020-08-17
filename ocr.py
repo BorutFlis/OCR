@@ -19,6 +19,7 @@ from sklearn.decomposition import PCA
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk import  pos_tag
+import scipy.stats as stats
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -136,7 +137,9 @@ class ocr_validation:
         example_text=""
         for img in images:
             example_text+=pytesseract.image_to_string(img)
-        return model.predict(vectorizer([example_text]))[0]
+        pred_vec=vectorizer([example_text])
+
+        return [model.predict(pred_vec)[0],pred_vec]
 
     def sum_vectorize(self,txt):
         txt_vec = self.cvec.transform(txt).toarray()[0]
@@ -171,21 +174,47 @@ if __name__ == "__main__":
     ocr_inst=ocr_validation()
     model=ocr_inst.setup_model(nu=0.05)
     pcas={}
+    #we transform the test set to a Pandas Dataframe as we will needed soon.
     df_pc=pd.DataFrame(ocr_inst.X.toarray())
     ocr_inst.feature_dict.pop("Sign-off")
-
+    #we load the test data from pickle
     test_txt=pickle.load(open("test.p","rb"))
     test_x= ocr_inst.cvec.transform(list(x[0] for x in test_txt)).toarray()
     test_df=pd.DataFrame(test_x)
+    #in this loop we create the reduced dimension with PCAs
     for k in ocr_inst.feature_dict.keys():
+        #we get the indices of the words that are part of a specific feature
         column_indices=list(map(lambda x: ocr_inst.cvec.get_feature_names().index(x),ocr_inst.feature_dict[k]))
         pca=PCA(n_components=1)
         df_pc[k+"_pca"]=pca.fit_transform(df_pc.iloc[:,column_indices])
         test_df[k+"_pca"]=pca.transform(test_df.iloc[:,column_indices])
         pcas[k]=pca
-
-
+    #in this for loop we create attirbutes for the summed features
+    for k in ocr_inst.feature_dict.keys():
+        #we get the indices of the words that are part of a specific feature
+        column_indices = list(map(lambda x: ocr_inst.cvec.get_feature_names().index(x), ocr_inst.feature_dict[k]))
+        df_pc[k + "_sum"] = df_pc.iloc[:, column_indices].sum(axis=1)
+        test_df[k + "_sum"] = test_df.iloc[:, column_indices].sum(axis=1)
+    #we tried the two models
     model_pca=OneClassSVM(nu=0.05)
-    model_pca.fit(df_pc.iloc[:75,-12:])
-    print(ocr_inst.evaluate(test_x,list(x[1] for x in test_txt),model))
-    print(ocr_inst.evaluate(test_df.iloc[:,-12:].to_numpy(),list(x[1] for x in test_txt),model_pca))
+    model_pca.fit(df_pc.iloc[:75,-24:-12])
+    model_sum=OneClassSVM(nu=0.05)
+    model_sum.fit(df_pc.iloc[:75,-12:])
+    #we evaluate both models
+    print(ocr_inst.evaluate(test_df.iloc[:,-24:-12].to_numpy(),list(x[1] for x in test_txt),model_pca))
+    print(ocr_inst.evaluate(test_df.iloc[:, -12:].to_numpy(), list(x[1] for x in test_txt), model_sum))
+    #we make predictions about the file in the testdata folder with summed features model
+    os.chdir("testdata")
+    for dc in os.listdir():
+        if dc.endswith(".docx"):
+            p = ocr_inst.make_prediction(dc, model_sum, ocr_inst.sum_vectorize)
+            z_scores = (p[1][0] - df_pc.iloc[:75, -12:].mean().to_numpy()) / (df_pc.iloc[:75, -12:].std().to_numpy())
+            validity="Valid" if p[0]==1 else "Invalid" if p[0]==-1 else None
+            print(f"Document {dc} is {validity}")
+            #we go through each feature and check if any of them are under-represented in the file
+            for i, c in enumerate(df_pc.columns[-12:]):
+                p_value=stats.norm.cdf(z_scores[i])
+                #this value refers to the probability that we find a lower value in the normal distribution
+                if p_value<0.3:
+                    #if our p-value is smaller than we print the feature to inform which feature is lacking.
+                    print(f"The feature {c.strip('_sum')} is under-represented in the document")

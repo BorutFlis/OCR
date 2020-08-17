@@ -9,6 +9,7 @@ dependencies:
   - ca-certificates=2020.6.24=0
   - cairo=1.16.0=hc79e3cf_1005
   - certifi=2020.6.20=py37_0
+  - click=7.1.2=py_0
   - colorama=0.4.3=py_0
   - curl=7.71.1=h4b64cdc_4
   - flake8=3.8.3=py_1
@@ -45,6 +46,7 @@ dependencies:
   - mkl_random=1.1.1=py37h47e9c7a_0
   - more-itertools=8.4.0=py_0
   - msys2-conda-epoch=20160418=1
+  - nltk=3.5=py_0
   - numpy=1.19.1=py37h5510c5b_0
   - numpy-base=1.19.1=py37ha3acd2a_0
   - olefile=0.46=py_0
@@ -70,6 +72,7 @@ dependencies:
   - python-dateutil=2.8.1=py_0
   - python_abi=3.7=1_cp37m
   - pytz=2020.1=py_0
+  - regex=2020.7.14=py37he774522_0
   - scikit-learn=0.23.1=py37h25d0782_0
   - scipy=1.5.0=py37h9439919_0
   - setuptools=49.2.0=py37_0
