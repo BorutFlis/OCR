@@ -19,6 +19,7 @@ from sklearn.decomposition import PCA
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk import  pos_tag
+import string
 import scipy.stats as stats
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -32,7 +33,7 @@ class LemmaTokenizer:
         return [
             self.wnl.lemmatize(
                 w.lower(), t[0].lower()) if t[0].lower() in ["a", "v", "n"] else self.wnl.lemmatize(w.lower()) \
-            for w, t in pos_tag(word_tokenize(doc)
+            for w, t in pos_tag(list(filter(lambda token: token not in string.punctuation,word_tokenize(doc)))
                                 )
         ]
 
@@ -85,6 +86,7 @@ class ocr_validation:
                 txt_data.append(pytesseract.image_to_string(Image.open(file_name)))
         #we return back to the main folder
         os.chdir("..")
+        pickle.dump(txt_data, open("train.p"))
         return txt_data
 
     #the parametres of the functions are the text file the built model and the Type of representation for the text vector
