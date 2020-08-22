@@ -1,0 +1,2 @@
+I have selected 4 NDAs and did a manual validation to check for components from the breakdown.
+From this, I have removed some components which you can cross-check with the outcome of your program.
