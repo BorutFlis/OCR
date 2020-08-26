@@ -18,6 +18,7 @@ from sklearn.svm import OneClassSVM
 from sklearn.decomposition import PCA
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
+import nltk
 from nltk import  pos_tag
 import string
 import scipy.stats as stats
@@ -28,13 +29,15 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 class LemmaTokenizer:
     def __init__(self):
         self.wnl = WordNetLemmatizer()
+        self.tokenizer= nltk.RegexpTokenizer(r"\w+")
 
     def __call__(self, doc):
         return [
             self.wnl.lemmatize(
                 w.lower(), t[0].lower()) if t[0].lower() in ["a", "v", "n"] else self.wnl.lemmatize(w.lower()) \
-            for w, t in pos_tag(list(filter(lambda token: token not in string.punctuation,word_tokenize(doc)))
-                                )
+            for w, t in pos_tag(
+                self.tokenizer.tokenize(doc)
+                )
         ]
 
 
@@ -42,16 +45,16 @@ class ocr_validation:
 
     def __init__(self):
         self.vocabulary={}
-
-    #nu is the probability by which a new example outside the boundaries of the SVM is
-    #actually an inlier, higher number means more examples will be classified as outliers
-    def setup_model(self,nu=0.05):
         try:
             self.texts = pickle.load(open("train.p", "rb"))
         except (OSError, IOError) as e:
             # we call the function that read pictures in tesseract
             self.texts = self.create_dataset()
-            pickle.dump(self.texts,open("train.p"))
+            pickle.dump(self.texts, open("train.p"))
+
+    #nu is the probability by which a new example outside the boundaries of the SVM is
+    #actually an inlier, higher number means more examples will be classified as outliers
+    def setup_model(self,nu=0.05):
         df=pd.read_excel("NDA Breakdown.xlsx")
         #We create the vocabulary which we will use as features in our model
         self.vocabulary={term.lower():i for i,term in enumerate(df["Terms"].dropna().apply(lambda x: x.lower()).unique())}
@@ -88,6 +91,24 @@ class ocr_validation:
         os.chdir("..")
         pickle.dump(txt_data, open("train.p"))
         return txt_data
+
+    def add_to_train_set(self,path):
+        ext=path.split(".")[-1]
+        #we reset the current working directory as the path of this file
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        if ext=="docx":
+            convert(path, os.getcwd() + "\\pred.pdf")
+            path = os.getcwd() + "\\pred.pdf"
+            ext = path.split(".")[-1]
+        if ext == "pdf":
+            images = convert_from_path(path)
+        new_txt=""
+        for img in images:
+            new_txt+=pytesseract.image_to_string(img)
+        self.texts.append(new_txt)
+        pickle.dump(self.texts,open("train.p"))
+        return new_txt
+
 
     #the parametres of the functions are the text file the built model and the Type of representation for the text vector
     def evaluate(self,test_texts,results,model,exploratory=False,avgs=None):
@@ -150,6 +171,7 @@ class ocr_validation:
             column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k]))
             return_vec.append(txt_vec[column_indices].sum())
         return [np.array(return_vec)]
+
 
     def convert_to_jpg(self):
         os.chdir("toconvert")
