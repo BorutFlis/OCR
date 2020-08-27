@@ -92,23 +92,6 @@ class ocr_validation:
         pickle.dump(txt_data, open("train.p"))
         return txt_data
 
-    def add_to_train_set(self,path):
-        ext=path.split(".")[-1]
-        #we reset the current working directory as the path of this file
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        if ext=="docx":
-            convert(path, os.getcwd() + "\\pred.pdf")
-            path = os.getcwd() + "\\pred.pdf"
-            ext = path.split(".")[-1]
-        if ext == "pdf":
-            images = convert_from_path(path)
-        new_txt=""
-        for img in images:
-            new_txt+=pytesseract.image_to_string(img)
-        self.texts.append(new_txt)
-        pickle.dump(self.texts,open("train.p"))
-        return new_txt
-
 
     #the parametres of the functions are the text file the built model and the Type of representation for the text vector
     def evaluate(self,test_texts,results,model,exploratory=False,avgs=None):
@@ -149,19 +132,33 @@ class ocr_validation:
         os.chdir("..")
         return test_txt
 
-    def make_prediction(self, path, model,vectorizer):
+    #this function converts docx, pdf, jpg to txt
+    def doc_ocr_txt(self,path):
         ext=path.split(".")[-1]
         if ext=="docx":
-            convert(path, os.getcwd()+"\\pred.pdf")
-            path=os.getcwd()+"\\pred.pdf"
+            convert(path, os.getcwd() + "\\pred.pdf")
+            path = os.getcwd() + "\\pred.pdf"
             ext = path.split(".")[-1]
-        if ext=="pdf":
-            images=convert_from_path(path)
-        example_text=""
+        if ext == "pdf":
+            images = convert_from_path(path)
+        elif ext == "jpg":
+            images = [Image.open(path)]
+        new_txt=""
         for img in images:
-            example_text+=pytesseract.image_to_string(img)
-        pred_vec=vectorizer([example_text])
+            new_txt+=pytesseract.image_to_string(img)
+        return new_txt
 
+    def add_to_train_set(self,path):
+        new_txt=self.doc_ocr_txt(path)
+        #we reset the current working directory as the path of this file
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        self.texts.append(new_txt)
+        pickle.dump(self.texts,open("train.p"))
+        return new_txt
+
+    def make_prediction(self, path, model,vectorizer):
+        example_text=self.doc_ocr_txt(path)
+        pred_vec=vectorizer([example_text])
         return [model.predict(pred_vec)[0],pred_vec]
 
     def sum_vectorize(self,txt):
@@ -230,7 +227,7 @@ if __name__ == "__main__":
     #we make predictions about the file in the testdata folder with summed features model
     os.chdir("testdata")
     for dc in os.listdir():
-        if dc.endswith(".docx"):
+        if dc.split(".")[0].endswith("Test"):
             p = ocr_inst.make_prediction(dc, model_sum, ocr_inst.sum_vectorize)
             z_scores = (p[1][0] - df_pc.iloc[:75, -12:].mean().to_numpy()) / (df_pc.iloc[:75, -12:].std().to_numpy())
             validity="Valid" if p[0]==1 else "Invalid" if p[0]==-1 else None
