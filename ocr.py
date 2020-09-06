@@ -26,6 +26,11 @@ import scipy.stats as stats
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 
+#class WordRepresentaton:
+#    def __init__(self):
+
+
+
 class LemmaTokenizer:
     def __init__(self):
         self.wnl = WordNetLemmatizer()
@@ -158,16 +163,15 @@ class ocr_validation:
 
     def make_prediction(self, path, model,vectorizer):
         example_text=self.doc_ocr_txt(path)
-        pred_vec=vectorizer([example_text])
-        return [model.predict(pred_vec)[0],pred_vec]
+        pred_vec=vectorizer(self.cvec.transform([example_text]).toarray()[0])
+        return [model.predict([pred_vec])[0],pred_vec]
 
-    def sum_vectorize(self,txt):
-        txt_vec = self.cvec.transform(txt).toarray()[0]
+    def sum_vectorize(self,txt_vec):
         return_vec=[]
         for k in self.feature_dict.keys():
             column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k]))
             return_vec.append(txt_vec[column_indices].sum())
-        return [np.array(return_vec)]
+        return pd.Series(return_vec)
 
 
     def convert_to_jpg(self):
@@ -212,10 +216,10 @@ if __name__ == "__main__":
         pcas[k]=pca
     #in this for loop we create attirbutes for the summed features
     for k in ocr_inst.feature_dict.keys():
-        #we get the indices of the words that are part of a specific feature
-        column_indices = list(map(lambda x: ocr_inst.cvec.get_feature_names().index(x), ocr_inst.feature_dict[k]))
-        df_pc[k + "_sum"] = df_pc.iloc[:, column_indices].sum(axis=1)
-        test_df[k + "_sum"] = test_df.iloc[:, column_indices].sum(axis=1)
+        df_pc[k + "_sum"] = pd.Series()
+        test_df[k + "_sum"] = pd.Series()
+    df_pc[[k+"_sum" for k in ocr_inst.feature_dict.keys()]]=df_pc.apply(lambda x: ocr_inst.sum_vectorize(x),axis=1)
+    test_df[[k + "_sum" for k in ocr_inst.feature_dict.keys()]] = test_df.apply(lambda x: ocr_inst.sum_vectorize(x), axis=1)
     #we tried the two models
     model_pca=OneClassSVM(nu=0.05)
     model_pca.fit(df_pc.iloc[:75,-24:-12])
@@ -238,4 +242,4 @@ if __name__ == "__main__":
                 #this value refers to the probability that we find a lower value in the normal distribution
                 if p_value<0.3:
                     #if our p-value is smaller than we print the feature to inform which feature is lacking.
-                    print(f"The feature {c.strip('_sum')} is under-represented in the document")
+                    print(f"The feature {c.strip('_sum')} is under-represented in the document: {1-p_value} % of documents score higher")
