@@ -16,12 +16,11 @@ from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.svm import OneClassSVM
 from sklearn.decomposition import PCA
-from nltk import word_tokenize
-from nltk.stem import WordNetLemmatizer
-import nltk
-from nltk import  pos_tag
 import string
 import scipy.stats as stats
+import Tokenizer as tk
+import representation as rp
+from collections import OrderedDict
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -31,31 +30,19 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 
 
 
-class LemmaTokenizer:
-    def __init__(self):
-        self.wnl = WordNetLemmatizer()
-        self.tokenizer= nltk.RegexpTokenizer(r"\w+")
-
-    def __call__(self, doc):
-        return [
-            self.wnl.lemmatize(
-                w.lower(), t[0].lower()) if t[0].lower() in ["a", "v", "n"] else self.wnl.lemmatize(w.lower()) \
-            for w, t in pos_tag(
-                self.tokenizer.tokenize(doc)
-                )
-        ]
-
-
 class ocr_validation:
 
     def __init__(self):
         self.vocabulary={}
+        self.train_set=[]
+        self.model = None
+        self.representation = None
         try:
             self.texts = pickle.load(open("train.p", "rb"))
         except (OSError, IOError) as e:
             # we call the function that read pictures in tesseract
             self.texts = self.create_dataset()
-            pickle.dump(self.texts, open("train.p"))
+            pickle.dump(self.texts, open("train.p","wb"))
 
     #nu is the probability by which a new example outside the boundaries of the SVM is
     #actually an inlier, higher number means more examples will be classified as outliers
@@ -64,12 +51,13 @@ class ocr_validation:
         #We create the vocabulary which we will use as features in our model
         self.vocabulary={term.lower():i for i,term in enumerate(df["Terms"].dropna().apply(lambda x: x.lower()).unique())}
         #We initialize a word vectorizer we our predefined vocabulary.
-        self.cvec = CountVectorizer(vocabulary=self.vocabulary,tokenizer=LemmaTokenizer())
+        self.cvec = CountVectorizer(vocabulary=self.vocabulary,tokenizer=tk.LemmaTokenizer())
         series_clause = df.iloc[np.where(df["Clause"].notna())[0], 0]
         indices = list(series_clause.index)
         indices.append(len(df))
         self.feature_dict = {series_clause[index]: list(df.iloc[indices[i]:indices[i + 1], 2].dropna()) for i, index in enumerate(series_clause.index)}
         self.feature_dict = {k: list(map(lambda x: x.lower(), v)) for k, v in self.feature_dict.items()}
+        self.feature_dict=OrderedDict(sorted(self.feature_dict.items(), key=lambda t: t[0]))
         self.X = self.cvec.fit_transform(self.texts)
         #We initialize a one Class SVM, which is used for anomaly detection
         model = OneClassSVM(gamma='auto',nu=nu)
@@ -94,7 +82,7 @@ class ocr_validation:
                 txt_data.append(pytesseract.image_to_string(Image.open(file_name)))
         #we return back to the main folder
         os.chdir("..")
-        pickle.dump(txt_data, open("train.p"))
+        pickle.dump(txt_data, open("train.p","wb"))
         return txt_data
 
 
@@ -153,25 +141,35 @@ class ocr_validation:
             new_txt+=pytesseract.image_to_string(img)
         return new_txt
 
-    def add_to_train_set(self,path):
-        new_txt=self.doc_ocr_txt(path)
+    def add_to_train_set(self,new_txt):
         #we reset the current working directory as the path of this file
         os.chdir(os.path.dirname(os.path.abspath(__file__)))
         self.texts.append(new_txt)
-        pickle.dump(self.texts,open("train.p"))
-        return new_txt
+        pickle.dump(self.texts,open("train.p","wb"))
+        return True
 
-    def make_prediction(self, path, model,vectorizer):
-        example_text=self.doc_ocr_txt(path)
-        pred_vec=vectorizer(self.cvec.transform([example_text]).toarray()[0])
-        return [model.predict([pred_vec])[0],pred_vec]
+    def make_prediction(self, example_text, model,vectorizer):
+        pred_vec=vectorizer.transform([example_text])
+        return [model.predict(pred_vec)[0],pred_vec]
 
-    def sum_vectorize(self,txt_vec):
-        return_vec=[]
-        for k in self.feature_dict.keys():
-            column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k]))
-            return_vec.append(txt_vec[column_indices].sum())
-        return pd.Series(return_vec)
+    def new_example(self, path):
+        example_text = self.doc_ocr_txt(path)
+        pred= self.make_prediction(example_text,self.model,self.representation)
+        validity="Valid" if pred[0]==1 else "Invalid"
+        print(f"The file is: {validity}")
+        self.add_to_train_set(example_text)
+        self.get_document_distance(pred[1])
+
+    def get_document_distance(self,vector):
+        df=pd.DataFrame(self.train_set)
+        z_scores = (vector[0] - df.mean().to_numpy()) / (df.std().to_numpy())
+        # we go through each feature and check if any of them are under-represented in the file
+        for i, k in enumerate(self.feature_dict.keys()):
+            p_value = stats.norm.cdf(z_scores[i])
+            # this value refers to the probability that we find a lower value in the normal distribution
+            if p_value < 0.3:
+                # if our p-value is smaller than we print the feature to inform which feature is lacking.
+                print(f"The feature {k} is under-represented in the document: {1 - p_value} % of documents score higher")
 
 
     def convert_to_jpg(self):
@@ -195,51 +193,21 @@ class ocr_validation:
             convert(file_name,pdf_folder+file_name+"docx.pdf")
         os.chdir("..")
 
+
+
+
 if __name__ == "__main__":
     ocr_inst=ocr_validation()
-    model=ocr_inst.setup_model(nu=0.05)
-    pcas={}
-    #we transform the test set to a Pandas Dataframe as we will needed soon.
-    df_pc=pd.DataFrame(ocr_inst.X.toarray())
+    ocr_inst.setup_model()
     ocr_inst.feature_dict.pop("Sign-off")
+    sum_rep=rp.SumRepresentation(ocr_inst.vocabulary,ocr_inst.feature_dict)
+    train_set=sum_rep.fit_transform(ocr_inst.texts[:75])
+    ocr_inst.train_set=train_set
     #we load the test data from pickle
     test_txt=pickle.load(open("test.p","rb"))
-    test_x= ocr_inst.cvec.transform(list(x[0] for x in test_txt)).toarray()
-    test_df=pd.DataFrame(test_x)
-    #in this loop we create the reduced dimension with PCAs
-    for k in ocr_inst.feature_dict.keys():
-        #we get the indices of the words that are part of a specific feature
-        column_indices=list(map(lambda x: ocr_inst.cvec.get_feature_names().index(x),ocr_inst.feature_dict[k]))
-        pca=PCA(n_components=1)
-        df_pc[k+"_pca"]=pca.fit_transform(df_pc.iloc[:,column_indices])
-        test_df[k+"_pca"]=pca.transform(test_df.iloc[:,column_indices])
-        pcas[k]=pca
-    #in this for loop we create attirbutes for the summed features
-    for k in ocr_inst.feature_dict.keys():
-        df_pc[k + "_sum"] = pd.Series()
-        test_df[k + "_sum"] = pd.Series()
-    df_pc[[k+"_sum" for k in ocr_inst.feature_dict.keys()]]=df_pc.apply(lambda x: ocr_inst.sum_vectorize(x),axis=1)
-    test_df[[k + "_sum" for k in ocr_inst.feature_dict.keys()]] = test_df.apply(lambda x: ocr_inst.sum_vectorize(x), axis=1)
-    #we tried the two models
-    model_pca=OneClassSVM(nu=0.05)
-    model_pca.fit(df_pc.iloc[:75,-24:-12])
+    test_set= sum_rep.transform(list(x[0] for x in test_txt))
     model_sum=OneClassSVM(nu=0.05)
-    model_sum.fit(df_pc.iloc[:75,-12:])
-    #we evaluate both models
-    print(ocr_inst.evaluate(test_df.iloc[:,-24:-12].to_numpy(),list(x[1] for x in test_txt),model_pca))
-    print(ocr_inst.evaluate(test_df.iloc[:, -12:].to_numpy(), list(x[1] for x in test_txt), model_sum))
-    #we make predictions about the file in the testdata folder with summed features model
-    os.chdir("testdata")
-    for dc in os.listdir():
-        if dc.split(".")[0].endswith("Test"):
-            p = ocr_inst.make_prediction(dc, model_sum, ocr_inst.sum_vectorize)
-            z_scores = (p[1][0] - df_pc.iloc[:75, -12:].mean().to_numpy()) / (df_pc.iloc[:75, -12:].std().to_numpy())
-            validity="Valid" if p[0]==1 else "Invalid" if p[0]==-1 else None
-            print(f"Document {dc} is {validity}")
-            #we go through each feature and check if any of them are under-represented in the file
-            for i, c in enumerate(df_pc.columns[-12:]):
-                p_value=stats.norm.cdf(z_scores[i])
-                #this value refers to the probability that we find a lower value in the normal distribution
-                if p_value<0.3:
-                    #if our p-value is smaller than we print the feature to inform which feature is lacking.
-                    print(f"The feature {c.strip('_sum')} is under-represented in the document: {1-p_value} % of documents score higher")
+    model_sum.fit(train_set)
+    ocr_inst.model=model_sum
+    ocr_inst.representation=sum_rep
+
