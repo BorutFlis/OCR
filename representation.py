@@ -1,6 +1,8 @@
 from sklearn.feature_extraction.text import CountVectorizer
+from scipy.sparse import csr_matrix
 import Tokenizer as tk
 import pandas as pd
+import itertools
 
 class RepresentationMeta(type):
 
@@ -24,9 +26,10 @@ class SumRepresentation():
 
     def sum_vectorize(self,txt_vec):
         return_vec=[]
-        for k in self.feature_dict.keys():
-            column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k]))
-            return_vec.append(txt_vec[column_indices].sum())
+        for k,v in self.feature_dict.items():
+            for k2 in v.keys():
+                column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k][k2]))
+                return_vec.append(txt_vec[column_indices].sum())
         return pd.Series(return_vec)
 
     def fit_transform(self,texts):
@@ -34,7 +37,13 @@ class SumRepresentation():
 
     def transform(self, texts):
         df = pd.DataFrame(self.cvec.transform(texts).toarray())
-        for k in self.feature_dict.keys():
-            df[k + "_sum"] = pd.Series()
-        df[[k + "_sum" for k in self.feature_dict.keys()]] = df.apply(lambda x: self.sum_vectorize(x), axis=1)
-        return df.iloc[:, -12:].to_numpy()
+        initial_n_col=len(df.columns)
+        for k,v in self.feature_dict.items():
+            for k2 in v.keys():
+                df[k2+"_sum"] = pd.Series()
+        ll=[list(k+"_sum" for k in d.keys()) for d in [self.feature_dict[k] for k in self.feature_dict.keys()]]
+        l = list(itertools.chain.from_iterable(ll))
+        df[l] = df.apply(lambda x: self.sum_vectorize(x), axis=1)
+        new_cols=len(df.columns)-initial_n_col
+        return csr_matrix(df.iloc[:, -new_cols:].values)
+
