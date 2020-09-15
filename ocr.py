@@ -24,6 +24,8 @@ from collections import OrderedDict
 from nltk.stem import WordNetLemmatizer
 import gensim.models
 from gensim import utils
+import re
+import datetime
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -36,6 +38,7 @@ class ocr_validation:
         self.model = None
         self.representation = None
         self.p_value=0.3
+        self.date_threshold=datetime.datetime(2018,1,1)
         try:
             self.texts = pickle.load(open("train.p", "rb"))
             self.test_texts= pickle.load(open("test.p","rb"))
@@ -49,13 +52,20 @@ class ocr_validation:
             pre_processed[i] = [wnl.lemmatize(w) for w in pre_processed[i]]
         self.modelW2V = gensim.models.Word2Vec(pre_processed, min_count=5)
 
+    def set_date_threshold(self,date):
+        m = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", date)
+        if m != None:
+            self.date_threshold = datetime.datetime(int(m.groups()[2]), int(m.groups()[1]), int(m.groups()[0]))
+        else:
+            print("Invalid format")
+        return self.date_threshold
 
     #nu is the probability by which a new example outside the boundaries of the SVM is
     #actually an inlier, higher number means more examples will be classified as outliers
     def setup_model(self,nu=0.05):
-        df=pd.read_csv("newterms.csv")
+        df=pd.read_csv("NDA Breakdown.csv")
         self.feature_dict=self.get_feature_dict()
-        self.add_synonyms()
+        #self.add_synonyms()
         #We create the vocabulary which we will use as features in our model
         self.vocabulary={}
         i=0
@@ -197,25 +207,50 @@ class ocr_validation:
         example_text = self.doc_ocr_txt(path)
         pred= self.make_prediction(example_text,self.model,self.representation)
         validity="Valid" if pred[0]==1 else "Invalid"
-        print(f"The file is: {validity}")
+        self.check_validity(example_text)
         if add==True:
             self.add_to_train_set(example_text)
         self.get_document_distance(pred[1])
+
+    def check_validity(self,text):
+        m = re.search("(?<=and) +(\w+) [,\(]? ?hereinafter", text)
+        m1 = re.search("(?<=between) +(\w+) [,\(]? ?hereinafter", text)
+        if m!=None and m1!=None:
+            print(f"Existence of Parties: YES ({m.groups()[0]} and {m1.groups()[0]})")
+        else:
+            print("Existence of Parties: NO")
+        m2 = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", text)
+        if m2!=None:
+            dt = datetime.datetime(int(m2.groups()[2]), int(m2.groups()[1]), int(m2.groups()[0]))
+            outdated= "YES" if self.date_threshold>dt else "NO"
+            print(f"Outdated NDA: {outdated}")
+        else:
+            print("No date of NDA given")
+        return True
 
     def get_document_distance(self,vector):
         df=pd.DataFrame(self.train_set.toarray())
         z_scores = (vector.toarray()[0] - df.mean().to_numpy()) / (df.std().to_numpy())
 
+        component_df=pd.DataFrame(index=df.index)
+        component_vec=[]
         i=0
         # we go through each feature and check if any of them are under-represented in the file
         for k ,v in self.feature_dict.items():
-           for k2 in v.keys():
+            component_df[k] = df.iloc[:, i:i + len(v.keys())].sum(axis=1)
+            component_vec.append(sum(vector.toarray()[0][i:i + len(v.keys())]))
+            for k2 in v.keys():
                 p_value = stats.norm.cdf(z_scores[i])
                 i+=1
                 # this value refers to the probability that we find a lower value in the normal distribution
-                if p_value < self.p_value:
-                    # if our p-value is smaller than we print the feature to inform which feature is lacking.
-                    print(f"The feature {k} - {k2} is under-represented in the document: {1 - p_value} % of documents score higher")
+                #if p_value < self.p_value:
+                # if our p-value is smaller than we print the feature to inform which feature is lacking.
+                print(f"The feature {k} - {k2}:  {p_value}")
+        print("Summary:")
+        component_z_scores=(component_vec-component_df.mean().to_numpy())/component_df.std().to_numpy()
+        for i,k in enumerate(self.feature_dict.keys()):
+            p_value=stats.norm.cdf(component_z_scores[i])
+            print(f"Component {k}: {p_value}")
 
 
     def convert_to_jpg(self):
