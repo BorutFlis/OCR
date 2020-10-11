@@ -26,66 +26,117 @@ import gensim.models
 from gensim import utils
 import re
 import datetime
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTTextContainer
+from scipy import spatial
+from sklearn import metrics
+
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
+class MovingWindow:
+    def __init__(self, tokens, window_size, step):
+        self.current = -step
+        self.last = len(tokens) - window_size + 1
+        self.remaining = (len(tokens) - window_size) % step
+        self.tokens = tokens
+        self.window_size = window_size
+        self.step = step
 
-class ocr_validation:
+    def __iter__(self):
+        return self
 
-    def __init__(self):
-        self.vocabulary={}
-        self.train_set=[]
-        self.model = None
-        self.representation = None
-        self.p_value=0.3
-        self.date_threshold=datetime.datetime(2018,1,1)
-        try:
-            self.texts = pickle.load(open("train.p", "rb"))
-            self.test_texts= pickle.load(open("test.p","rb"))
-        except (OSError, IOError) as e:
-            # we call the function that read pictures in tesseract
-            self.texts = self.create_dataset()
-            pickle.dump(self.texts, open("train.p","wb"))
-        wnl = WordNetLemmatizer()
-        pre_processed = [utils.simple_preprocess(t) for t in self.texts]
-        for i in range(len(pre_processed)):
-            pre_processed[i] = [wnl.lemmatize(w) for w in pre_processed[i]]
-        self.modelW2V = gensim.models.Word2Vec(pre_processed, min_count=5)
-
-    def set_date_threshold(self,date):
-        m = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", date)
-        if m != None:
-            self.date_threshold = datetime.datetime(int(m.groups()[2]), int(m.groups()[1]), int(m.groups()[0]))
+    def __next__(self):
+        self.current += self.step
+        if self.current < self.last:
+            return self.tokens[self.current : self.current + self.window_size]
+        elif self.remaining:
+            self.remaining = 0
+            return self.tokens[-self.window_size:]
         else:
-            print("Invalid format")
-        return self.date_threshold
+            raise StopIteration
 
-    #nu is the probability by which a new example outside the boundaries of the SVM is
-    #actually an inlier, higher number means more examples will be classified as outliers
-    def setup_model(self,nu=0.05):
-        df=pd.read_csv("NDA Breakdown.csv")
-        self.feature_dict=self.get_feature_dict()
-        #self.add_synonyms()
-        #We create the vocabulary which we will use as features in our model
-        self.vocabulary={}
-        i=0
-        for k,v in self.feature_dict.items():
-            for k2 in v.keys():
-                for w in self.feature_dict[k][k2]:
-                    if w not in self.vocabulary.keys():
-                        self.vocabulary[w]=i
-                        i+=1
-        #We initialize a word vectorizer we our predefined vocabulary.
-        self.cvec = CountVectorizer(vocabulary=self.vocabulary,tokenizer=tk.LemmaTokenizer())
 
-        self.X = self.cvec.fit_transform(self.texts)
-        #We initialize a one Class SVM, which is used for anomaly detection
-        model = OneClassSVM(gamma='auto',nu=nu)
-        #We fit the model on our set
-        model.fit(self.X)
-        #we return the model that will be able to predict whether the new example adhere to our class
-        return model
+class conversion:
+    def create_test_set(self):
+        # we keep the test examples in separate folder as they are different class
+        os.chdir("testset")
+        test_txt = []
+        for filename in os.listdir():
+            # We add image string and the label (files with complete NDAs start with n)
+            test_txt.append([pytesseract.image_to_string(Image.open(filename)), 1 if filename[0] == "n" else -1])
+        os.chdir("..")
+        return test_txt
 
+        # this function converts docx, pdf, jpg to txt
+
+
+    def doc_ocr_txt(self, path):
+        ext = path.split(".")[-1]
+        if ext == "docx":
+            convert(path, os.getcwd() + "\\pred.pdf")
+            path = os.getcwd() + "\\pred.pdf"
+            ext = path.split(".")[-1]
+        if ext == "pdf":
+            images = convert_from_path(path)
+        elif ext == "jpg":
+            images = [Image.open(path)]
+        new_txt = ""
+        for img in images:
+            new_txt += pytesseract.image_to_string(img)
+        return new_txt
+
+
+    def add_to_train_set(self, new_txt):
+        # we reset the current working directory as the path of this file
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        self.texts.append(new_txt)
+        pickle.dump(self.texts, open("train.p", "wb"))
+        return True
+
+    def convert_to_jpg(self):
+        os.chdir("toconvert")
+        dataset_folder = "\\".join(os.getcwd().split("\\")[:-1]) + "\\dataset\\"
+        for file_name in os.listdir():
+            images = convert_from_path(file_name)
+            if len(images) > 1:
+                folder_name = file_name.strip(".pdf")
+                os.mkdir(dataset_folder + folder_name)
+                for i, img in enumerate(images):
+                    img.save(dataset_folder + folder_name + "\\" + str(i) + ".jpg", "JPEG", quality=80, optimize=True,
+                             progressive=True)
+            else:
+                images[0].save(dataset_folder + file_name + ".jpg", "JPEG", quality=80, optimize=True, progressive=True)
+        os.chdir("..")
+
+
+    def convert_to_pdf(self):
+        os.chdir("docx")
+        pdf_folder = "\\".join(os.getcwd().split("\\")[:-1]) + "\\pdf\\"
+        for file_name in os.listdir():
+            convert(file_name, pdf_folder + file_name + "docx.pdf")
+        os.chdir("..")
+
+    def create_dataset(self):
+        os.chdir("dataset")
+        txt_data=[]
+        for file_name in os.listdir():
+            #some file are made of multiple pictures
+            if os.path.isdir(file_name):
+                os.chdir(file_name)
+                txt=""
+                for img in os.listdir():
+                    txt+=pytesseract.image_to_string(Image.open(img))
+                txt_data.append(txt)
+                os.chdir("..")
+            else:
+                txt_data.append(pytesseract.image_to_string(Image.open(file_name)))
+        #we return back to the main folder
+        os.chdir("..")
+        pickle.dump(txt_data, open("train.p","wb"))
+        return txt_data
+
+class feature_engineering:
     def add_synonyms(self):
         for k, v in self.feature_dict.items():
             for k2 in v.keys():
@@ -110,24 +161,25 @@ class ocr_validation:
                 feature_dict[tup[0]] = OrderedDict({tup[1]: grp[tup]})
         return feature_dict
 
-    def create_dataset(self):
-        os.chdir("dataset")
-        txt_data=[]
-        for file_name in os.listdir():
-            #some file are made of multiple pictures
-            if os.path.isdir(file_name):
-                os.chdir(file_name)
-                txt=""
-                for img in os.listdir():
-                    txt+=pytesseract.image_to_string(Image.open(img))
-                txt_data.append(txt)
-                os.chdir("..")
+    def flat_dict(self,dd):
+        items = []
+        for k, v in dd.items():
+            if isinstance(v, dict):
+                items.extend(self.flat_dict(v))
             else:
-                txt_data.append(pytesseract.image_to_string(Image.open(file_name)))
-        #we return back to the main folder
-        os.chdir("..")
-        pickle.dump(txt_data, open("train.p","wb"))
-        return txt_data
+                items.extend(v)
+        return items
+
+class model_evaluation:
+
+    def evaluate_basic(self,representation,model):
+        preds = model.predict(representation.transform([t[0] for t in self.test_texts]))
+        targs = [t[1] for t in self.test_texts]
+        print("accuracy: ",metrics.accuracy_score(targs, preds))
+        print("precision: ", metrics.precision_score(targs, preds))
+        print("recall: ", metrics.recall_score(targs, preds,pos_label=-1))
+        print("f1: ", metrics.f1_score(targs, preds))
+        print("area under curve (auc): ", metrics.roc_auc_score(targs, preds))
 
     def evaluate_mulitple(self,representations, models):
         for rep in representations:
@@ -136,6 +188,7 @@ class ocr_validation:
                 test=rep.transform([t[0] for t in self.test_texts])
                 model.fit(train)
                 print(self.evaluate(test,[t[1] for t in self.test_texts],model))
+
 
     #the parametres of the functions are the text file the built model and the Type of representation for the text vector
     def evaluate(self,test_texts,results,model,exploratory=False,avgs=None):
@@ -157,47 +210,60 @@ class ocr_validation:
                     correct_neg+=1
             #if we set exploratory to True we go through the wrongly classified examples
             elif exploratory==True:
-                print(results[i])
-                print(model.decision_function([x]))
-                print(model.score_samples([x]))
+                print(i," ",results[i])
+                print(self.test_texts[i])
+                print(model.decision_function(x))
+                print(model.score_samples(x))
                 #if avgs != None:
 
         len_neg=sum(1 if x==-1 else 0  for x in results)
         len_pos=len(results)-len_neg
         return [correct/len(results),correct_pos/len_pos,correct_neg/len_neg]
 
-    def create_test_set(self):
-        #we keep the test examples in separate folder as they are different class
-        os.chdir("testset")
-        test_txt=[]
-        for filename in os.listdir():
-            #We add image string and the label (files with complete NDAs start with n)
-            test_txt.append([pytesseract.image_to_string(Image.open(filename)),1 if filename[0]=="n" else -1])
-        os.chdir("..")
-        return test_txt
+class ocr_validation(conversion,model_evaluation,feature_engineering):
 
-    #this function converts docx, pdf, jpg to txt
-    def doc_ocr_txt(self,path):
-        ext=path.split(".")[-1]
-        if ext=="docx":
-            convert(path, os.getcwd() + "\\pred.pdf")
-            path = os.getcwd() + "\\pred.pdf"
-            ext = path.split(".")[-1]
-        if ext == "pdf":
-            images = convert_from_path(path)
-        elif ext == "jpg":
-            images = [Image.open(path)]
-        new_txt=""
-        for img in images:
-            new_txt+=pytesseract.image_to_string(img)
-        return new_txt
+    def __init__(self):
+        self.vocabulary={}
+        self.train_set=[]
+        self.model = None
+        self.representation = None
+        self.p_value=0.3
+        self.date_threshold=datetime.datetime(2018,1,1)
+        try:
+            self.texts = pickle.load(open("train.p", "rb"))
+            self.test_texts= pickle.load(open("test.p","rb"))
+        except (OSError, IOError) as e:
+            # we call the function that read pictures in tesseract
+            self.texts = self.create_dataset()
+            pickle.dump(self.texts, open("train.p","wb"))
+        wnl = WordNetLemmatizer()
+        pre_processed = [utils.simple_preprocess(t) for t in self.texts]
+        for i in range(len(pre_processed)):
+            pre_processed[i] = [wnl.lemmatize(w) for w in pre_processed[i]]
+        self.modelW2V = gensim.models.Word2Vec(pre_processed, min_count=5)
 
-    def add_to_train_set(self,new_txt):
-        #we reset the current working directory as the path of this file
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        self.texts.append(new_txt)
-        pickle.dump(self.texts,open("train.p","wb"))
-        return True
+        df = pd.read_csv("NDA Breakdown.csv")
+        self.feature_dict = self.get_feature_dict()
+        # self.add_synonyms()
+        # We create the vocabulary which we will use as features in our model
+        self.vocabulary = {}
+        i = 0
+        for k, v in self.feature_dict.items():
+            for k2 in v.keys():
+                for w in self.feature_dict[k][k2]:
+                    if w not in self.vocabulary.keys():
+                        self.vocabulary[w] = i
+                        i += 1
+        # We initialize a word vectorizer we our predefined vocabulary.
+        self.cvec = CountVectorizer(vocabulary=self.vocabulary, tokenizer=tk.LemmaTokenizer())
+
+    def set_date_threshold(self,date):
+        m = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", date)
+        if m != None:
+            self.date_threshold = datetime.datetime(int(m.groups()[2]), int(m.groups()[1]), int(m.groups()[0]))
+        else:
+            print("Invalid format")
+        return self.date_threshold
 
     def make_prediction(self, example_text, model,vectorizer):
         pred_vec=vectorizer.transform([example_text])
@@ -211,6 +277,7 @@ class ocr_validation:
         if add==True:
             self.add_to_train_set(example_text)
         self.get_document_distance(pred[1])
+        self.identify_features_window(5,10,example_text)
 
     def check_validity(self,text):
         m = re.search("(?<=and) +(\w+) [,\(]? ?hereinafter", text)
@@ -229,60 +296,97 @@ class ocr_validation:
         return True
 
     def get_document_distance(self,vector):
+        #we change the train data to pandas dataframe, due to ease of mean/std calculation
         df=pd.DataFrame(self.train_set.toarray())
-        z_scores = (vector.toarray()[0] - df.mean().to_numpy()) / (df.std().to_numpy())
+        p_values = self.z_score_distribution(vector, df)
 
-        component_df=pd.DataFrame(index=df.index)
-        component_vec=[]
+        #we nee to initialize a counter to keep track where we are in the double for loop
         i=0
         # we go through each feature and check if any of them are under-represented in the file
         for k ,v in self.feature_dict.items():
-            component_df[k] = df.iloc[:, i:i + len(v.keys())].sum(axis=1)
-            component_vec.append(sum(vector.toarray()[0][i:i + len(v.keys())]))
             for k2 in v.keys():
-                p_value = stats.norm.cdf(z_scores[i])
+                print(f"The feature {k} - {k2}:  {p_values[0][i]}")
                 i+=1
-                # this value refers to the probability that we find a lower value in the normal distribution
-                #if p_value < self.p_value:
-                # if our p-value is smaller than we print the feature to inform which feature is lacking.
-                print(f"The feature {k} - {k2}:  {p_value}")
         print("Summary:")
-        component_z_scores=(component_vec-component_df.mean().to_numpy())/component_df.std().to_numpy()
+        component_df=self.representation.component_values(train_set)
+        component_vec=self.representation.component_values(vector)
+        p_values=self.z_score_distribution(component_vec,component_df)
         for i,k in enumerate(self.feature_dict.keys()):
-            p_value=stats.norm.cdf(component_z_scores[i])
-            print(f"Component {k}: {p_value}")
+            print(f"Component {k}: {p_values[0][i]}")
 
+    def z_score_distribution(self,individual,population):
+        z_scores = (individual - population.mean().to_numpy()) / population.std().to_numpy()
+        return stats.norm.cdf(z_scores)
 
-    def convert_to_jpg(self):
-        os.chdir("toconvert")
-        dataset_folder="\\".join(os.getcwd().split("\\")[:-1])+"\\dataset\\"
-        for file_name in os.listdir():
-            images= convert_from_path(file_name)
-            if len(images)>1:
-                folder_name=file_name.strip(".pdf")
-                os.mkdir(dataset_folder+folder_name)
-                for i,img in enumerate(images):
-                    img.save(dataset_folder+folder_name+"\\"+str(i)+".jpg", "JPEG", quality=80, optimize=True, progressive=True)
-            else:
-                images[0].save(dataset_folder+file_name+".jpg", "JPEG", quality=80, optimize=True, progressive=True)
-        os.chdir("..")
+    def identify_features(self,pdf_path,doc2vec):
+        #we download text examples representing features
+        features=pickle.load(open("features.p","rb"))
+        #we transform all the features to doc2vec embedings
+        f_vecs=doc2vec.transform([v for k,v in features.items()])
+        paragraphs=[]
+        #we go through the pages of the pdf_document
+        for page_layout in extract_pages(pdf_path):
+            #through all the elements in the page_layout
+            for i, element in enumerate(page_layout):
+                #we Only append if it is a textCOntainer and it has a certain length
+                if isinstance(element, LTTextContainer) and len(element.get_text()) > 20 and re.match('[a-zA-Z]+',element.get_text()[0]) != None:
+                    paragraphs.append(element.get_text())
+        #we transform all paragraphs in doc2vec embeddings
+        paragraphs_d2v=doc2vec.transform(paragraphs)
+        #we create in which we will keep which paragraphs are most representative of certain feature. Important it is an ordered dict
+        #because the order will used to access the calculated similarities
+        features_similarities=OrderedDict({k:[] for k in features.keys()})
+        for i,p in enumerate(paragraphs_d2v):
+            #we calculate of a paragraph and all the feature examples
+            sims=doc2vec.model.wv.cosine_similarities(p.toarray().transpose(),f_vecs.toarray())
+            #go through all the features and append their corresponding similarity
+            for ix,k in enumerate(features_similarities.keys()):
+                features_similarities[k].append([i,sims[ix][ix]])
+        #sorting the similarities
+        for k in features_similarities.keys():
+            features_similarities[k]=sorted(features_similarities[k],key=lambda x: x[1])
+        return paragraphs,features_similarities
 
-    def convert_to_pdf(self):
-        os.chdir("docx")
-        pdf_folder="\\".join(os.getcwd().split("\\")[:-1])+"\\pdf\\"
-        for file_name in os.listdir():
-            convert(file_name,pdf_folder+file_name+"docx.pdf")
-        os.chdir("..")
+    def identify_features_window(self,speed,window_size,txt):
+        features={}
+        for k,v in self.feature_dict.items():
+            features[k]=self.flat_dict(v)
+        f_vecs=self.doc2vec.transform([" ".join(v) for k,v in features.items()])
+        tokens=utils.simple_preprocess(txt)
+        windows=[]
+        tokens_iter=MovingWindow(tokens,window_size,speed)
+        for ti in tokens_iter:
+            window_vec=self.doc2vec.model.infer_vector(ti)
+            windows.append(window_vec)
+        sum_vec=self.representation.transform([txt])
+        component_vec=self.representation.component_values(sum_vec)
+        component_df=self.representation.component_values(ocr_inst.train_set)
+        p_values=self.z_score_distribution(component_vec,component_df)
+        f_dict_keys=list(self.feature_dict.keys())
+        for ix,f in enumerate(features.keys()):
+            sims = self.doc2vec.model.wv.cosine_similarities(f_vecs[ix].toarray().transpose(), windows)
+            sims_flat=[x[i] for i,x in enumerate(sims)]
+            most_similar = np.argsort(sims_flat)[-1]
+            print(f)
+            token_start=most_similar*speed
+            token_finish=most_similar*speed+window_size if most_similar<(len(windows)-1) else tokens[-window_size:]
+            print(tokens[token_start:token_finish])
+            print(sims_flat[most_similar])
+            print(p_values[0][f_dict_keys.index(f)])
 
 
 if __name__ == "__main__":
     ocr_inst=ocr_validation()
-    ocr_inst.setup_model()
+    #ocr_inst.setup_model()
     #ocr_inst.feature_dict.pop("Sign-off")
     sum_rep=rp.SumRepresentation(ocr_inst.vocabulary,ocr_inst.feature_dict)
     cvec=CountVectorizer(vocabulary=ocr_inst.vocabulary,binary=True)
+    d2v_train=pickle.load(open("doc2vec.p","rb"))
+    d2v=rp.Doc2Vec(d2v_train)
+    ocr_inst.doc2vec=d2v
     model=OneClassSVM(nu=0.05)
-    ocr_inst.evaluate_mulitple([cvec,sum_rep],[model])
+    ocr_inst.evaluate_mulitple([cvec,sum_rep,d2v],[model])
+
 
     train_set=sum_rep.fit_transform(ocr_inst.texts[:75])
     ocr_inst.train_set=train_set
@@ -290,6 +394,7 @@ if __name__ == "__main__":
     model_sum.fit(train_set)
     ocr_inst.model=model_sum
     ocr_inst.representation=sum_rep
+
 
 
 

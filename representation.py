@@ -3,6 +3,8 @@ from scipy.sparse import csr_matrix
 import Tokenizer as tk
 import pandas as pd
 import itertools
+import gensim.models
+from gensim import utils
 
 class RepresentationMeta(type):
 
@@ -18,17 +20,57 @@ class RepresentationMeta(type):
 class RepresentationInterface(metaclass=RepresentationMeta):
     pass
 
+
+class Doc2Vec():
+
+    def __init__(self,train_texts):
+        pre_processed = [utils.simple_preprocess(t) for t in train_texts]
+        self.train_corpus = []
+        for i, tokens in enumerate(pre_processed):
+            self.train_corpus.append(gensim.models.doc2vec.TaggedDocument(tokens, [i]))
+        self.model = gensim.models.doc2vec.Doc2Vec(vector_size=300, min_count=5, epochs=20)
+        self.model.build_vocab(self.train_corpus)
+        self.model.train(self.train_corpus, total_examples=self.model.corpus_count, epochs=self.model.epochs)
+
+#    def __repr__(self):
+#        print("Doc2Vec Representation")
+
+    def fit_transform(self,texts):
+        return self.transform(texts)
+
+    def transform(self, texts):
+        vecs=[]
+        t_pre_processed = [utils.simple_preprocess(t) for t in texts]
+        for t in t_pre_processed:
+            vecs.append(self.model.infer_vector(t))
+        return csr_matrix(vecs)
+
+
 class SumRepresentation():
 
     def __init__(self,vocabulary,feature_dict):
-        self.cvec=CountVectorizer(vocabulary=vocabulary,tokenizer=tk.LemmaTokenizer())
+        self.__cvec=CountVectorizer(vocabulary=vocabulary,tokenizer=tk.LemmaTokenizer())
         self.feature_dict=feature_dict
 
+#    def __repr__(self):
+#        print("Sum Representation")
+
+    def component_values(self,dataset):
+        df=pd.DataFrame(dataset.toarray())
+        i=0
+        for k,v in self.feature_dict.items():
+            df.insert(len(df.columns),k,df.iloc[:,i:i+len(v.keys())].sum(axis=1))
+            i+=len(v.keys())
+        return df.iloc[:,-len(self.feature_dict.keys()):]
+
+    #function used in dataframe apply it is used for each row
     def sum_vectorize(self,txt_vec):
         return_vec=[]
+        #we go through all component keys and through all feature keys to access the vocabulary
         for k,v in self.feature_dict.items():
             for k2 in v.keys():
-                column_indices=list(map(lambda x: self.cvec.get_feature_names().index(x),self.feature_dict[k][k2]))
+                #we get the column indexes of the words from the countVectorizer
+                column_indices=list(map(lambda x: self.__cvec.get_feature_names().index(x),self.feature_dict[k][k2]))
                 return_vec.append(txt_vec[column_indices].sum())
         return pd.Series(return_vec)
 
@@ -36,7 +78,7 @@ class SumRepresentation():
         return self.transform(texts)
 
     def transform(self, texts):
-        df = pd.DataFrame(self.cvec.transform(texts).toarray())
+        df = pd.DataFrame(self.__cvec.transform(texts).toarray())
         initial_n_col=len(df.columns)
         for k,v in self.feature_dict.items():
             for k2 in v.keys():
