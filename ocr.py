@@ -30,6 +30,7 @@ from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from scipy import spatial
 from sklearn import metrics
+import json
 
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -220,13 +221,26 @@ class model_evaluation:
         len_pos=len(results)-len_neg
         return [correct/len(results),correct_pos/len_pos,correct_neg/len_neg]
 
-class ocr_validation(conversion,model_evaluation,feature_engineering):
+class OcrValidation(conversion,model_evaluation,feature_engineering):
+    __instance = None
+
+    @staticmethod
+    def getInstance():
+        if OcrValidation.__instance == None:
+            OcrValidation()
+        return OcrValidation.__instance
 
     def __init__(self):
+        if OcrValidation.__instance != None:
+            raise Exception("This class is a singleton!")
+        else:
+            OcrValidation.__instance = self
         self.vocabulary={}
         self.train_set=[]
         self.model = None
         self.representation = None
+        self.doc2vec = None
+        self.exemplar_vec = None
         self.p_value=0.3
         self.date_threshold=datetime.datetime(2018,1,1)
         try:
@@ -241,7 +255,6 @@ class ocr_validation(conversion,model_evaluation,feature_engineering):
         for i in range(len(pre_processed)):
             pre_processed[i] = [wnl.lemmatize(w) for w in pre_processed[i]]
         self.modelW2V = gensim.models.Word2Vec(pre_processed, min_count=5)
-
         df = pd.read_csv("NDA Breakdown.csv")
         self.feature_dict = self.get_feature_dict()
         # self.add_synonyms()
@@ -256,6 +269,7 @@ class ocr_validation(conversion,model_evaluation,feature_engineering):
                         i += 1
         # We initialize a word vectorizer we our predefined vocabulary.
         self.cvec = CountVectorizer(vocabulary=self.vocabulary, tokenizer=tk.LemmaTokenizer())
+
 
     def set_date_threshold(self,date):
         m = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", date)
@@ -277,23 +291,38 @@ class ocr_validation(conversion,model_evaluation,feature_engineering):
         if add==True:
             self.add_to_train_set(example_text)
         self.get_document_distance(pred[1])
-        self.identify_features_window(5,10,example_text)
+        self.identify_features_window(example_text,5,10)
+
+    def new_example_json(self,json_text):
+        js= json.loads(json_text)
+        txt=""
+        for k in js:
+            txt+=js[k]
+        return_dict=self.identify_features_window(txt, 5, 10)
+        return_dict["probability"]=np.mean([v for k,v in return_dict.items()])
+        #vec=self.doc2vec.model.infer_vector([txt])
+        #return_dict["probability"] = self.doc2vec.model.wv.cosine_similarities(vec.transpose(), [self.exemplar_vec])
+        v_dict=self.check_validity(txt)
+        for k,v in v_dict.items():
+            return_dict[k]=v
+        return return_dict
 
     def check_validity(self,text):
         m = re.search("(?<=and) +(\w+) [,\(]? ?hereinafter", text)
         m1 = re.search("(?<=between) +(\w+) [,\(]? ?hereinafter", text)
+        return_dict={}
         if m!=None and m1!=None:
-            print(f"Existence of Parties: YES ({m.groups()[0]} and {m1.groups()[0]})")
+            return_dict["Existence of Parties"]= f"YES {m.groups()[0]} and {m1.groups()[0]}"
         else:
-            print("Existence of Parties: NO")
+            return_dict["Existence of Parties"]= "NO"
         m2 = re.search("(\d{2})(?:-|/)(\d{2})(?:-|/)(\d{4})", text)
         if m2!=None:
             dt = datetime.datetime(int(m2.groups()[2]), int(m2.groups()[1]), int(m2.groups()[0]))
             outdated= "YES" if self.date_threshold>dt else "NO"
-            print(f"Outdated NDA: {outdated}")
+            return_dict["Date"]=f"Outdated NDA: {outdated}"
         else:
-            print("No date of NDA given")
-        return True
+            return_dict["Date"]="No date of NDA given"
+        return return_dict
 
     def get_document_distance(self,vector):
         #we change the train data to pandas dataframe, due to ease of mean/std calculation
@@ -347,7 +376,7 @@ class ocr_validation(conversion,model_evaluation,feature_engineering):
             features_similarities[k]=sorted(features_similarities[k],key=lambda x: x[1])
         return paragraphs,features_similarities
 
-    def identify_features_window(self,speed,window_size,txt):
+    def identify_features_window(self,txt,speed=5,window_size=10):
         features={}
         for k,v in self.feature_dict.items():
             features[k]=self.flat_dict(v)
@@ -363,20 +392,23 @@ class ocr_validation(conversion,model_evaluation,feature_engineering):
         component_df=self.representation.component_values(ocr_inst.train_set)
         p_values=self.z_score_distribution(component_vec,component_df)
         f_dict_keys=list(self.feature_dict.keys())
+        return_dict={}
         for ix,f in enumerate(features.keys()):
             sims = self.doc2vec.model.wv.cosine_similarities(f_vecs[ix].toarray().transpose(), windows)
             sims_flat=[x[i] for i,x in enumerate(sims)]
             most_similar = np.argsort(sims_flat)[-1]
-            print(f)
+
             token_start=most_similar*speed
             token_finish=most_similar*speed+window_size if most_similar<(len(windows)-1) else tokens[-window_size:]
-            print(tokens[token_start:token_finish])
-            print(sims_flat[most_similar])
-            print(p_values[0][f_dict_keys.index(f)])
+            #print(tokens[token_start:token_finish])
+            #print(sims_flat[most_similar])
+            #print(p_values[0][f_dict_keys.index(f)])
+            return_dict[f]=0.75*sims_flat[most_similar]+0.25*p_values[0][f_dict_keys.index(f)]
+        return return_dict
 
 
 if __name__ == "__main__":
-    ocr_inst=ocr_validation()
+    ocr_inst=OcrValidation()
     #ocr_inst.setup_model()
     #ocr_inst.feature_dict.pop("Sign-off")
     sum_rep=rp.SumRepresentation(ocr_inst.vocabulary,ocr_inst.feature_dict)
@@ -384,9 +416,9 @@ if __name__ == "__main__":
     d2v_train=pickle.load(open("doc2vec.p","rb"))
     d2v=rp.Doc2Vec(d2v_train)
     ocr_inst.doc2vec=d2v
+    ocr_inst.exemplar_vec=ocr_inst.doc2vec.model.infer_vector([ocr_inst.texts[1]])
     model=OneClassSVM(nu=0.05)
     ocr_inst.evaluate_mulitple([cvec,sum_rep,d2v],[model])
-
 
     train_set=sum_rep.fit_transform(ocr_inst.texts[:75])
     ocr_inst.train_set=train_set
