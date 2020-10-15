@@ -294,18 +294,15 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
         self.identify_features_window(example_text,5,10)
 
     def new_example_json(self,json_text):
-        js= json.loads(json_text)
+        js= json.loads(re.sub("\\n"," ",json_text))
         txt=""
-        for k in js:
-            txt+=js[k]
+        for k in js["json"][0]:
+            txt+=js["json"][0][k]
         return_dict=self.identify_features_window(txt, 5, 10)
         return_dict["probability"]=np.mean([v for k,v in return_dict.items()])
-        #vec=self.doc2vec.model.infer_vector([txt])
-        #return_dict["probability"] = self.doc2vec.model.wv.cosine_similarities(vec.transpose(), [self.exemplar_vec])
         v_dict=self.check_validity(txt)
-        for k,v in v_dict.items():
-            return_dict[k]=v
-        return return_dict
+        return_dict={**v_dict ,**return_dict}
+        return json.dumps(return_dict)
 
     def check_validity(self,text):
         m = re.search("(?<=and) +(\w+) [,\(]? ?hereinafter", text)
