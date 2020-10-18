@@ -58,86 +58,6 @@ class MovingWindow:
             raise StopIteration
 
 
-class conversion:
-
-    def create_test_set(self):
-        # we keep the test examples in separate folder as they are different class
-        os.chdir("testset")
-        test_txt = []
-        for filename in os.listdir():
-            # We add image string and the label (files with complete NDAs start with n)
-            test_txt.append([pytesseract.image_to_string(Image.open(filename)), 1 if filename[0] == "n" else -1])
-        os.chdir("..")
-        return test_txt
-
-        # this function converts docx, pdf, jpg to txt
-
-
-    def doc_ocr_txt(self, path):
-        ext = path.split(".")[-1]
-        if ext == "docx":
-            convert(path, os.getcwd() + "\\pred.pdf")
-            path = os.getcwd() + "\\pred.pdf"
-            ext = path.split(".")[-1]
-        if ext == "pdf":
-            images = convert_from_path(path)
-        elif ext == "jpg":
-            images = [Image.open(path)]
-        new_txt = ""
-        for img in images:
-            new_txt += pytesseract.image_to_string(img)
-        return new_txt
-
-
-    def add_to_train_set(self, new_txt):
-        # we reset the current working directory as the path of this file
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        self.texts.append(new_txt)
-        pickle.dump(self.texts, open("train.p", "wb"))
-        return True
-
-    def convert_to_jpg(self):
-        os.chdir("toconvert")
-        dataset_folder = "\\".join(os.getcwd().split("\\")[:-1]) + "\\dataset\\"
-        for file_name in os.listdir():
-            images = convert_from_path(file_name)
-            if len(images) > 1:
-                folder_name = file_name.strip(".pdf")
-                os.mkdir(dataset_folder + folder_name)
-                for i, img in enumerate(images):
-                    img.save(dataset_folder + folder_name + "\\" + str(i) + ".jpg", "JPEG", quality=80, optimize=True,
-                             progressive=True)
-            else:
-                images[0].save(dataset_folder + file_name + ".jpg", "JPEG", quality=80, optimize=True, progressive=True)
-        os.chdir("..")
-
-
-    def convert_to_pdf(self):
-        os.chdir("docx")
-        pdf_folder = "\\".join(os.getcwd().split("\\")[:-1]) + "\\pdf\\"
-        for file_name in os.listdir():
-            convert(file_name, pdf_folder + file_name + "docx.pdf")
-        os.chdir("..")
-
-    def create_dataset(self):
-        os.chdir("dataset")
-        txt_data=[]
-        for file_name in os.listdir():
-            #some file are made of multiple pictures
-            if os.path.isdir(file_name):
-                os.chdir(file_name)
-                txt=""
-                for img in os.listdir():
-                    txt+=pytesseract.image_to_string(Image.open(img))
-                txt_data.append(txt)
-                os.chdir("..")
-            else:
-                txt_data.append(pytesseract.image_to_string(Image.open(file_name)))
-        #we return back to the main folder
-        os.chdir("..")
-        pickle.dump(txt_data, open("train.p","wb"))
-        return txt_data
-
 class feature_engineering:
     def add_synonyms(self):
         for k, v in self.feature_dict.items():
@@ -222,7 +142,7 @@ class model_evaluation:
         len_pos=len(results)-len_neg
         return [correct/len(results),correct_pos/len_pos,correct_neg/len_neg]
 
-class OcrValidation(conversion,model_evaluation,feature_engineering):
+class OcrValidation(model_evaluation,feature_engineering):
     __instance = None
 
     @staticmethod
@@ -249,8 +169,7 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
             self.test_texts= pickle.load(open("test.p","rb"))
         except (OSError, IOError) as e:
             # we call the function that read pictures in tesseract
-            self.texts = self.create_dataset()
-            pickle.dump(self.texts, open("train.p","wb"))
+            exit("File not found: test.p and train.p")
         wnl = WordNetLemmatizer()
         pre_processed = [utils.simple_preprocess(t) for t in self.texts]
         for i in range(len(pre_processed)):
@@ -292,16 +211,6 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
     def make_prediction(self, example_text, model,vectorizer):
         pred_vec=vectorizer.transform([example_text])
         return [model.predict(pred_vec)[0],pred_vec]
-
-    def new_example(self, path,add=True):
-        example_text = self.doc_ocr_txt(path)
-        pred= self.make_prediction(example_text,self.model,self.representation)
-        validity="Valid" if pred[0]==1 else "Invalid"
-        self.check_validity(example_text)
-        if add==True:
-            self.add_to_train_set(example_text)
-        self.get_document_distance(pred[1])
-        self.identify_features_window(example_text,5,10)
 
     def new_example_json(self,json_text):
         js= json.loads(re.sub("\\n"," ",json_text))
