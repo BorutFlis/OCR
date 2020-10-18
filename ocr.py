@@ -267,8 +267,17 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
                     if w not in self.vocabulary.keys():
                         self.vocabulary[w] = i
                         i += 1
-        # We initialize a word vectorizer we our predefined vocabulary.
+        sum_rep = rp.SumRepresentation(self.vocabulary, self.feature_dict)
         self.cvec = CountVectorizer(vocabulary=self.vocabulary, tokenizer=tk.LemmaTokenizer())
+        self.train_set = sum_rep.fit_transform(self.texts[:75])
+        model_sum = OneClassSVM(nu=0.05)
+        model_sum.fit(self.train_set)
+        self.model = model_sum
+        self.representation = sum_rep
+        d2v_train = pickle.load(open("doc2vec.p", "rb"))
+        d2v = rp.Doc2Vec(d2v_train)
+        self.doc2vec = d2v
+        self.exemplar_vec = self.doc2vec.model.infer_vector([self.texts[1]])
 
 
     def set_date_threshold(self,date):
@@ -386,7 +395,7 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
             windows.append(window_vec)
         sum_vec=self.representation.transform([txt])
         component_vec=self.representation.component_values(sum_vec)
-        component_df=self.representation.component_values(ocr_inst.train_set)
+        component_df=self.representation.component_values(self.train_set)
         p_values=self.z_score_distribution(component_vec,component_df)
         f_dict_keys=list(self.feature_dict.keys())
         return_dict={}
