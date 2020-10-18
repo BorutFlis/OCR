@@ -212,9 +212,9 @@ class OcrValidation(model_evaluation,feature_engineering):
         pred_vec=vectorizer.transform([example_text])
         return [model.predict(pred_vec)[0],pred_vec]
 
-    def new_example_json(self,json_text):
-        js= json.loads(re.sub("\\n"," ",json_text))
-        txt=""
+    def new_example_json(self,js):
+        #js= json.loads(re.sub("\\n"," ",json_text))
+        #txt=""
         for k in js:
             txt+=js[k]
         return_dict=self.identify_features_window(txt, 5, 10)
