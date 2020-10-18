@@ -9,7 +9,7 @@ from pdf2image.exceptions import (
     PDFPageCountError,
     PDFSyntaxError
 )
-import pytesseract
+#import pytesseract
 from docx2pdf import convert
 from PIL import Image
 from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer
@@ -33,7 +33,7 @@ from sklearn import metrics
 import json
 
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class MovingWindow:
     def __init__(self, tokens, window_size, step):
@@ -59,6 +59,7 @@ class MovingWindow:
 
 
 class conversion:
+
     def create_test_set(self):
         # we keep the test examples in separate folder as they are different class
         os.chdir("testset")
