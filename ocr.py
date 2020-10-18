@@ -343,7 +343,7 @@ class OcrValidation(conversion,model_evaluation,feature_engineering):
                 print(f"The feature {k} - {k2}:  {p_values[0][i]}")
                 i+=1
         print("Summary:")
-        component_df=self.representation.component_values(train_set)
+        component_df=self.representation.component_values(self.train_set)
         component_vec=self.representation.component_values(vector)
         p_values=self.z_score_distribution(component_vec,component_df)
         for i,k in enumerate(self.feature_dict.keys()):
