@@ -215,8 +215,8 @@ class OcrValidation(model_evaluation,feature_engineering):
     def new_example_json(self,json_text):
         js= json.loads(re.sub("\\n"," ",json_text))
         txt=""
-        for k in js["json"][0]:
-            txt+=js["json"][0][k]
+        for k in js:
+            txt+=js[k]
         return_dict=self.identify_features_window(txt, 5, 10)
         return_dict["probability"]=np.mean([v for k,v in return_dict.items()])
         v_dict=self.check_validity(txt)
