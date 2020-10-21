@@ -9,7 +9,7 @@ from pdf2image.exceptions import (
     PDFPageCountError,
     PDFSyntaxError
 )
-#import pytesseract
+import pytesseract
 from docx2pdf import convert
 from PIL import Image
 from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer
@@ -33,7 +33,7 @@ from sklearn import metrics
 import json
 
 
-#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract22.exe'
 
 class MovingWindow:
     def __init__(self, tokens, window_size, step):
@@ -142,20 +142,25 @@ class model_evaluation:
         len_pos=len(results)-len_neg
         return [correct/len(results),correct_pos/len_pos,correct_neg/len_neg]
 
-class OcrValidation(model_evaluation,feature_engineering):
-    __instance = None
+class conversion:
 
-    @staticmethod
-    def getInstance():
-        if OcrValidation.__instance == None:
-            OcrValidation()
-        return OcrValidation.__instance
+    def create_test_set(self):
+        # we keep the test examples in separate folder as they are different class
+        os.chdir("testset")
+        test_txt = []
+        for filename in os.listdir():
+            # We add image string and the label (files with complete NDAs start with n)
+            test_txt.append([pytesseract.image_to_string(Image.open(filename)), 1 if filename[0] == "n" else -1])
+        os.chdir("..")
+        return test_txt
+
+        # this function converts docx, pdf, jpg to txt
+
+
+class OcrValidation(conversion,model_evaluation,feature_engineering):
+
 
     def __init__(self):
-        if OcrValidation.__instance != None:
-            raise Exception("This class is a singleton!")
-        else:
-            OcrValidation.__instance = self
         self.vocabulary={}
         self.train_set=[]
         self.model = None
@@ -175,7 +180,6 @@ class OcrValidation(model_evaluation,feature_engineering):
         for i in range(len(pre_processed)):
             pre_processed[i] = [wnl.lemmatize(w) for w in pre_processed[i]]
         self.modelW2V = gensim.models.Word2Vec(pre_processed, min_count=5)
-        df = pd.read_csv("NDA Breakdown.csv")
         self.feature_dict = self.get_feature_dict()
         # self.add_synonyms()
         # We create the vocabulary which we will use as features in our model
