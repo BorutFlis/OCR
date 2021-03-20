@@ -45,7 +45,7 @@ instabot==0.117.0
 instagram-private-api==1.6.0.0
 instagram-private-api-extensions==0.3.8
 instapy-cli==0.0.12
-Jinja2==2.11.2
+Jinja2==2.11.3
 jmespath @ file:///tmp/build/80754af9/jmespath_1594304593830/work
 joblib @ file:///tmp/build/80754af9/joblib_1594236160679/work
 jsonschema==3.0.2
