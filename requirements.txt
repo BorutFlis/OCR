@@ -108,7 +108,7 @@ threadpoolctl @ file:///tmp/tmp9twdgx9k/threadpoolctl-2.1.0-py3-none-any.whl
 toml @ file:///home/conda/feedstock_root/build_artifacts/toml_1589469402899/work
 tqdm @ file:///tmp/build/80754af9/tqdm_1596810128862/work
 tzlocal @ file:///C:/ci/tzlocal_1597435800236/work
-urllib3==1.25.10
+urllib3==1.26.5
 wasabi @ file:///tmp/build/80754af9/wasabi_1599244993840/work
 win-inet-pton==1.1.0
 wincertstore==0.2
