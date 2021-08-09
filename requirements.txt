@@ -88,7 +88,7 @@ pytesseract @ file:///home/conda/feedstock_root/build_artifacts/pytesseract_1595
 pytest==6.0.1
 python-dateutil==2.8.1
 pytz==2020.1
-pywin32==227
+pywin32==301
 regex @ file:///C:/ci/regex_1596827857056/work
 requests @ file:///tmp/build/80754af9/requests_1592841827918/work
 requests-toolbelt==0.9.1
