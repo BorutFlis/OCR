@@ -72,7 +72,7 @@ plac @ file:///C:/ci/plac_1594257364512/work
 pluggy @ file:///D:/bld/pluggy_1592827687923/work
 preshed==3.0.2
 proglog==0.1.9
-protobuf==3.13.0
+protobuf==3.18.3
 py @ file:///home/conda/feedstock_root/build_artifacts/py_1593088446458/work
 pyarrow==1.0.1
 pyasn1==0.4.8
